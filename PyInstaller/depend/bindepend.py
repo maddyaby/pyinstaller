@@ -463,34 +463,43 @@ def _get_imports_macholib(filename, search_paths):
     # and @executable_path. The MacOS dylib loader (dyld) fully resolves the symbolic links when using @loader_path
     # and @executable_path references, so we need to do the same using `os.path.realpath`.
     bin_path = os.path.dirname(os.path.realpath(filename))
-    python_bin_path = os.path.dirname(os.path.realpath(sys.executable))
+    python_bin = os.path.realpath(sys.executable)
+    python_bin_path = os.path.dirname(python_bin)
 
-    # Walk through Mach-O headers, and collect all referenced libraries.
-    m = MachO(filename)
-    for header in m.headers:
-        for idx, name, lib in header.walkRelocatables():
-            referenced_libs.add(lib)
+    def _get_run_paths(filename):
+        # Walk through Mach-O headers, and collect all referenced libraries.
+        m = MachO(filename)
+        for header in m.headers:
+            for idx, name, lib in header.walkRelocatables():
+                referenced_libs.add(lib)
 
-    # Find LC_RPATH commands to collect rpaths. macholib does not handle @rpath, so we need to handle run paths
-    # ourselves.
-    run_paths = set()
-    for header in m.headers:
-        for command in header.commands:
-            # A command is a tuple like:
-            #   (<macholib.mach_o.load_command object at 0x>,
-            #    <macholib.mach_o.rpath_command object at 0x>,
-            #    '../lib\x00\x00')
-            cmd_type = command[0].cmd
-            if cmd_type == LC_RPATH:
-                rpath = command[2].decode('utf-8')
-                # Remove trailing '\x00' characters. E.g., '../lib\x00\x00'
-                rpath = rpath.rstrip('\x00')
-                # If run path starts with @, ensure it starts with either @loader_path or @executable_path. We cannot
-                # process anything else.
-                if rpath.startswith("@") and not rpath.startswith(("@executable_path", "@loader_path")):
-                    logger.warning("Unsupported rpath format %r found in binary %r - ignoring...", rpath, filename)
-                    continue
-                run_paths.add(rpath)
+        # Find LC_RPATH commands to collect rpaths. macholib does not handle @rpath, so we need to handle run paths
+        # ourselves.
+        run_paths = set()
+        for header in m.headers:
+            for command in header.commands:
+                # A command is a tuple like:
+                #   (<macholib.mach_o.load_command object at 0x>,
+                #    <macholib.mach_o.rpath_command object at 0x>,
+                #    '../lib\x00\x00')
+                cmd_type = command[0].cmd
+                if cmd_type == LC_RPATH:
+                    rpath = command[2].decode('utf-8')
+                    # Remove trailing '\x00' characters. E.g., '../lib\x00\x00'
+                    rpath = rpath.rstrip('\x00')
+                    # If run path starts with @, ensure it starts with either @loader_path or @executable_path. We cannot
+                    # process anything else.
+                    if rpath.startswith("@") and not rpath.startswith(("@executable_path", "@loader_path")):
+                        logger.warning("Unsupported rpath format %r found in binary %r - ignoring...", rpath, filename)
+                        continue
+                    run_paths.add(rpath)
+        return run_paths
+
+    run_paths = _get_run_paths(filename)
+
+    # Also add any rpaths that are set by sys.executable for the case where a library has rpath-based dependencies with
+    # additional path components (e.g. @rpath/some/path/somelib.dylib) but rpath isn't set in the library itself
+    run_paths = run_paths.union(_get_run_paths(python_bin))
 
     # For distributions like Anaconda, all of the dylibs are stored in the lib directory of the Python distribution, not
     # alongside of the .so's in each module's subdirectory. Usually, libraries using @rpath to reference their

@@ -2829,6 +2829,20 @@ class ModuleGraph(ObjectGraph):
             self.msgout(4, "_find_module_path -> exception", exc)
             raise
 
+        if path_data is None:
+            # if module wasn't loadable from all that above, try using importlib with the 
+            # running python
+            try: 
+                spec = importlib.util.find_spec(module_name)
+                if spec is not None:
+                    loader = spec.loader
+                    namespace_dirs.extend(spec.submodule_search_locations or [])
+                    pathname = loader.get_filename(module_name)
+                    path_data = (pathname, loader)
+                    return path_data
+            except:
+                pass
+
         # If this module was not found, raise an exception.
         self.msgout(4, "_find_module_path ->", path_data)
         if path_data is None:

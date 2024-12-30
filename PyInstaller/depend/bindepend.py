@@ -477,7 +477,7 @@ def _get_imports_macholib(filename, search_paths):
     def _get_run_paths(m):
         # Find LC_RPATH commands to collect rpaths from MachO object.
         # macholib does not handle @rpath, so we need to handle run paths ourselves.
-        run_paths = set()
+        run_paths = []
         for header in m.headers:
             for command in header.commands:
                 # A command is a tuple like:
@@ -494,7 +494,7 @@ def _get_imports_macholib(filename, search_paths):
                     if rpath.startswith("@") and not rpath.startswith(("@executable_path", "@loader_path")):
                         logger.warning("Unsupported rpath format %r found in binary %r - ignoring...", rpath, filename)
                         continue
-                    run_paths.add(rpath)
+                    run_paths.append(rpath)
         return run_paths
 
     @functools.lru_cache
@@ -522,11 +522,15 @@ def _get_imports_macholib(filename, search_paths):
     # (for example, the `_ssl` extension can reference the OpenSSL library as `@rpath/libssl.3.dylib`). In another
     # example, python executable has its run path set to the top-level directory of its .framework bundle; in this
     # case the `ssl` extension references the OpenSSL library as `@rpath/Versions/3.10/lib/libssl.1.1.dylib`.
-    run_paths = run_paths.union(get_run_paths(python_bin))
+    run_paths += get_run_paths(python_bin)
 
     # This fallback should be fully superseded by the above recovery of run paths from python executable; but for now,
     # keep it around in case of unforeseen corner cases.
-    run_paths.add(os.path.join(compat.base_prefix, 'lib'))
+    run_paths.append(os.path.join(compat.base_prefix, 'lib'))
+
+    # De-duplicate run_paths while preserving the order of the list. This is better than using a set for run paths
+    # because the set can do arbriary re-ording and we want to keep the priority in the order we found the paths above.
+    run_paths = list(dict.fromkeys(run_paths))
 
     def _resolve_using_loader_path(lib, bin_path, python_bin_path):
         # macholib does not support @loader_path, so replace it with @executable_path. Strictly speaking, @loader_path

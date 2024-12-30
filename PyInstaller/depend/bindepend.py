@@ -460,14 +460,14 @@ def _get_imports_macholib(filename, search_paths):
     output = set()
 
     # Parent directory of the input binary and parent directory of python executable, used to substitute @loader_path
-    # and @executable_path. The MacOS dylib loader (dyld) fully resolves the symbolic links when using @loader_path
+    # and @executable_path. The macOS dylib loader (dyld) fully resolves the symbolic links when using @loader_path
     # and @executable_path references, so we need to do the same using `os.path.realpath`.
     bin_path = os.path.dirname(os.path.realpath(filename))
     python_bin = os.path.realpath(sys.executable)
     python_bin_path = os.path.dirname(python_bin)
 
     def _get_referenced_libs(m):
-        # collect referenced libraries from MachO object
+        # Collect referenced libraries from MachO object.
         referenced_libs = set()
         for header in m.headers:
             for idx, name, lib in header.walkRelocatables():
@@ -499,33 +499,33 @@ def _get_imports_macholib(filename, search_paths):
 
     @functools.lru_cache
     def get_run_paths_and_referenced_libs(filename):
-        # Walk through Mach-O headers, and collect all referenced libraries and run paths
+        # Walk through Mach-O headers, and collect all referenced libraries and run paths.
         m = MachO(filename)
         return _get_referenced_libs(m), _get_run_paths(m)
 
     @functools.lru_cache
     def get_run_paths(filename):
-        # Walk through Mach-O headers, and collect only run_paths
+        # Walk through Mach-O headers, and collect only run paths.
         return _get_run_paths(MachO(filename))
 
+    # Collect referenced libraries and run paths from the input binary.
     referenced_libs, run_paths = get_run_paths_and_referenced_libs(filename)
 
-    # Also add any rpaths that are set by sys.executable for the case where a library has rpath-based dependencies with
-    # additional path components (e.g. @rpath/some/path/somelib.dylib) but rpath isn't set in the library itself
-    # We cache the result of this using functools.lru_cache so that we aren't calling it for every file
+    # On macOS, run paths (rpaths) are inherited from the executable that loads the given shared library (or from the
+    # shared library that loads the given shared library). This means that shared libraries and python binary extensions
+    # can reference other shared libraries using @rpath without having set any run paths themselves.
+    #
+    # In order to simulate the run path inheritance that happens in unfrozen python programs, we need to augment the
+    # run paths from the given binary with those set by the python interpreter executable (`sys.executable`). Anaconda
+    # python, for example, sets the run path on the python executable to `@loader_path/../lib`, which allows python
+    # extensions to reference shared libraries in the Anaconda environment's `lib` directory via only `@rpath`
+    # (for example, the `_ssl` extension can reference the OpenSSL library as `@rpath/libssl.3.dylib`). In another
+    # example, python executable has its run path set to the top-level directory of its .framework bundle; in this
+    # case the `ssl` extension references the OpenSSL library as `@rpath/Versions/3.10/lib/libssl.1.1.dylib`.
     run_paths = run_paths.union(get_run_paths(python_bin))
 
-    # For distributions like Anaconda, all of the dylibs are stored in the lib directory of the Python distribution, not
-    # alongside of the .so's in each module's subdirectory. Usually, libraries using @rpath to reference their
-    # dependencies also set up their run-paths via LC_RPATH commands. However, they are not strictly required to do so,
-    # because run-paths are inherited from the process within which the libraries are loaded. Therefore, if the python
-    # executable uses an LC_RPATH command to set up run-path that resolves the shared lib directory (for example,
-    # `@loader_path/../lib` in case of the Anaconda python), all libraries loaded within the python process are able
-    # to resolve the shared libraries within the environment's shared lib directory without using LC_RPATH commands
-    # themselves.
-    #
-    # Our analysis does not account for inherited run-paths, and we attempt to work around this limitation by
-    # registering the following fall-back run-path.
+    # This fallback should be fully superseded by the above recovery of run paths from python executable; but for now,
+    # keep it around in case of unforeseen corner cases.
     run_paths.add(os.path.join(compat.base_prefix, 'lib'))
 
     def _resolve_using_loader_path(lib, bin_path, python_bin_path):

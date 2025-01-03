@@ -528,8 +528,7 @@ def _get_imports_macholib(filename, search_paths):
     # keep it around in case of unforeseen corner cases.
     run_paths.append(os.path.join(compat.base_prefix, 'lib'))
 
-    # De-duplicate run_paths while preserving the order of the list. This is better than using a set for run paths
-    # because the set can do arbriary re-ording and we want to keep the priority in the order we found the paths above.
+    # De-duplicate run_paths while preserving their order.
     run_paths = list(dict.fromkeys(run_paths))
 
     def _resolve_using_loader_path(lib, bin_path, python_bin_path):
